@@ -1,0 +1,122 @@
+name: API
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/api.yml'
+      - 'src/**'
+      - 'tests/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'tsconfig.json'
+      - 'tsup.config.ts'
+      - 'vitest.config.ts'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/api.yml'
+      - 'src/**'
+      - 'tests/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'tsconfig.json'
+      - 'tsup.config.ts'
+      - 'vitest.config.ts'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout API
+        uses: actions/checkout@v4
+        with:
+          path: class-manager-api
+
+      - name: Checkout Shared
+        uses: actions/checkout@v4
+        with:
+          repository: brouklins/class-manager-shared
+          path: class-manager-shared
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ vars.NODE_VERSION || '22' }}
+
+      - name: Enable Corepack
+        working-directory: class-manager-api
+        run: corepack enable
+
+      - name: Install dependencies
+        working-directory: class-manager-api
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: class-manager-api
+        run: pnpm typecheck
+
+      - name: Build
+        working-directory: class-manager-api
+        run: pnpm build
+
+      - name: Test
+        working-directory: class-manager-api
+        run: pnpm test
+
+  deploy:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout API
+        uses: actions/checkout@v4
+        with:
+          path: class-manager-api
+
+      - name: Checkout Shared
+        uses: actions/checkout@v4
+        with:
+          repository: brouklins/class-manager-shared
+          path: class-manager-shared
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ vars.NODE_VERSION || '22' }}
+
+      - name: Enable Corepack
+        working-directory: class-manager-api
+        run: corepack enable
+
+      - name: Install dependencies
+        working-directory: class-manager-api
+        run: pnpm install --frozen-lockfile
+
+      - name: Package Lambda
+        working-directory: class-manager-api
+        run: pnpm package
+
+      - name: Resolve Lambda function name
+        id: lambda-name
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          VALUE=$(aws ssm get-parameter --name "/class-manager/prod/api/lambda-function-name" --query 'Parameter.Value' --output text)
+          echo "value=$VALUE" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy Lambda code
+        working-directory: class-manager-api
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          aws lambda update-function-code \
+            --function-name "${{ steps.lambda-name.outputs.value }}" \
+            --zip-file "fileb://dist/function.zip"

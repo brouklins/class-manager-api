@@ -22,12 +22,22 @@ const matchesSearch = (student: Student, search?: string): boolean => {
     .some((value) => value.includes(normalizedSearch));
 };
 
+const hydrateStudent = (student: Record<string, unknown>): Student =>
+  studentSchema.parse({
+    ...student,
+    lastPaymentAt:
+      (typeof student.lastPaymentAt === 'string' && student.lastPaymentAt) ||
+      (typeof student.startedAt === 'string' && student.startedAt) ||
+      (typeof student.createdAt === 'string' && student.createdAt) ||
+      nowIso()
+  });
+
 export const studentService = {
   async listStudents(auth: AuthContext, status = 'active', search?: string): Promise<Student[]> {
     const students = await repository.listStudents(auth.teacherId);
 
     return students
-      .map((student) => studentSchema.parse(student))
+      .map((student) => hydrateStudent(student as Record<string, unknown>))
       .filter((student) => (status === 'all' ? true : student.status === status))
       .filter((student) => matchesSearch(student, search))
       .sort((left, right) => left.name.localeCompare(right.name, 'pt-BR'));
@@ -40,7 +50,7 @@ export const studentService = {
       throw notFoundError('Student not found.');
     }
 
-    return studentSchema.parse(student);
+    return hydrateStudent(student as Record<string, unknown>);
   },
 
   async createStudent(auth: AuthContext, payload: unknown): Promise<Student> {
@@ -56,6 +66,7 @@ export const studentService = {
       phone: input.phone,
       status: 'active',
       startedAt: input.startedAt ?? timestamp,
+      lastPaymentAt: input.lastPaymentAt ?? input.startedAt ?? timestamp,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -91,4 +102,3 @@ export const studentService = {
     await repository.putStudent(updated);
   }
 };
-

@@ -21,6 +21,7 @@ describe('dashboard service', () => {
         name: 'Maria',
         status: 'active',
         startedAt: '2026-05-01T00:00:00.000Z',
+        lastPaymentAt: '2026-06-01T00:00:00.000Z',
         createdAt: '2026-05-01T00:00:00.000Z',
         updatedAt: '2026-05-01T00:00:00.000Z'
       }
@@ -67,4 +68,3 @@ describe('dashboard service', () => {
     expect(result.upcomingLessons).toBe(1);
   });
 });
-

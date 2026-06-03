@@ -1,9 +1,11 @@
 import {
+  type CreateLessonInput,
   createLessonInputSchema,
   lessonOperationResultSchema,
   lessonSchema,
   updateLessonInputSchema,
   type Lesson,
+  type LessonOperationResult,
   type LessonWarning
 } from '@brouklins/class-manager-shared';
 import { randomUUID } from 'node:crypto';
@@ -30,6 +32,67 @@ const createWarnings = (lesson: Lesson, candidates: Lesson[]): LessonWarning[] =
   if (conflictingLessonIds.length === 0) {
     return [];
   }
+
+  return [
+    {
+      code: 'schedule_overlap',
+      message: 'Existe sobreposição com outra aula agendada.',
+      conflictingLessonIds
+    }
+  ];
+};
+
+const buildRecurringLessons = (
+  teacherId: string,
+  timestamp: string,
+  baseLessonId: string,
+  input: CreateLessonInput
+): Lesson[] => {
+  const seriesId = input.recurrence ? `series_${randomUUID()}` : undefined;
+  const startTime = new Date(input.startAt).getTime();
+  const endTime = new Date(input.endAt).getTime();
+  const lessonDuration = endTime - startTime;
+  const recurrenceEnd = input.recurrence ? new Date(input.recurrence.until).getTime() : startTime;
+  const lessons: Lesson[] = [];
+
+  for (let occurrenceStart = startTime, index = 0; occurrenceStart <= recurrenceEnd; occurrenceStart += 7 * 24 * 60 * 60 * 1000, index += 1) {
+    const lessonId = index === 0 ? baseLessonId : `les_${randomUUID()}`;
+
+    lessons.push(
+      lessonSchema.parse({
+        entityType: 'lesson',
+        lessonId,
+        recurringSeriesId: seriesId,
+        teacherId,
+        title: input.title,
+        sport: input.sport,
+        startAt: new Date(occurrenceStart).toISOString(),
+        endAt: new Date(occurrenceStart + lessonDuration).toISOString(),
+        capacity: input.capacity,
+        studentIds: input.studentIds,
+        status: 'scheduled',
+        notes: input.notes,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      })
+    );
+  }
+
+  if (lessons.length > 104) {
+    throw conflictError('A recorrencia semanal excede o limite de 104 aulas.');
+  }
+
+  return lessons;
+};
+
+const mergeWarnings = (warnings: LessonWarning[]): LessonWarning[] => {
+  const overlaps = warnings.filter((warning) => warning.code === 'schedule_overlap');
+
+  if (overlaps.length === 0) {
+    return [];
+  }
+
+  const conflictingLessonIds = [...new Set(overlaps.flatMap((warning) => warning.conflictingLessonIds))];
 
   return [
     {
@@ -73,42 +136,33 @@ export const lessonsService = {
     const timestamp = nowIso();
 
     await ensureStudentsExistAndAreActive(auth, input.studentIds);
-
-    const lesson = lessonSchema.parse({
-      entityType: 'lesson',
-      lessonId: `les_${randomUUID()}`,
-      teacherId: auth.teacherId,
-      title: input.title,
-      sport: input.sport,
-      startAt: input.startAt,
-      endAt: input.endAt,
-      capacity: input.capacity,
-      studentIds: input.studentIds,
-      status: 'scheduled',
-      notes: input.notes,
-      createdAt: timestamp,
-      updatedAt: timestamp
-    });
-
-    const candidates = await repository.listLessonsByRange(
+    const lessons = buildRecurringLessons(auth.teacherId, timestamp, `les_${randomUUID()}`, input);
+    const rangeEnd = lessons.at(-1)?.endAt ?? input.endAt;
+    const existingCandidates = await repository.listLessonsByRange(
       auth.teacherId,
-      subtractDays(lesson.startAt, 1),
-      lesson.endAt
+      subtractDays(lessons[0]!.startAt, 1),
+      rangeEnd
     );
+    const parsedCandidates = existingCandidates.map((candidate) => lessonSchema.parse(candidate));
+    const warnings = mergeWarnings(lessons.flatMap((lesson) => createWarnings(lesson, parsedCandidates)));
 
-    const warnings = createWarnings(lesson, candidates.map((candidate) => lessonSchema.parse(candidate)));
-
-    await repository.putLesson(lesson);
+    await Promise.all(lessons.map(async (lesson) => repository.putLesson(lesson)));
 
     return lessonOperationResultSchema.parse({
-      lesson,
+      lesson: lessons[0]!,
+      affectedLessons: lessons,
       warnings
     });
   },
 
-  async updateLesson(auth: AuthContext, lessonId: string, payload: unknown) {
+  async updateLesson(auth: AuthContext, lessonId: string, payload: unknown): Promise<LessonOperationResult> {
     const input = updateLessonInputSchema.parse(payload);
     const existing = await this.getLesson(auth, lessonId);
+
+    if (input.studentIds) {
+      await ensureStudentsExistAndAreActive(auth, input.studentIds);
+    }
+
     const updated = lessonSchema.parse({
       ...existing,
       ...input,
@@ -131,6 +185,7 @@ export const lessonsService = {
 
     return lessonOperationResultSchema.parse({
       lesson: updated,
+      affectedLessons: [updated],
       warnings
     });
   },
@@ -182,6 +237,7 @@ export const lessonsService = {
 
     return lessonOperationResultSchema.parse({
       lesson: updated,
+      affectedLessons: [updated],
       warnings
     });
   },
@@ -202,4 +258,3 @@ export const lessonsService = {
     await repository.putLesson(updated);
   }
 };
-

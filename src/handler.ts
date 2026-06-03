@@ -34,6 +34,9 @@ const requireDateRange = (event: APIGatewayProxyEventV2) => {
   return { from, to };
 };
 
+const lessonScopeFrom = (event: APIGatewayProxyEventV2): 'single' | 'series' =>
+  event.queryStringParameters?.scope === 'series' ? 'series' : 'single';
+
 export const handler = async (
   event: APIGatewayProxyEventV2
 ): Promise<APIGatewayProxyStructuredResultV2> => {
@@ -110,12 +113,15 @@ export const handler = async (
 
     if (isPath(event, 'PATCH', /^\/v1\/lessons\/[^/]+$/)) {
       const lessonId = getMatch(rawPath, /^\/v1\/lessons\/([^/]+)$/)[1]!;
-      return json(200, await lessonsService.updateLesson(auth, lessonId, parseJsonBody(event) ?? {}));
+      return json(
+        200,
+        await lessonsService.updateLesson(auth, lessonId, parseJsonBody(event) ?? {}, lessonScopeFrom(event))
+      );
     }
 
     if (isPath(event, 'DELETE', /^\/v1\/lessons\/[^/]+$/)) {
       const lessonId = getMatch(rawPath, /^\/v1\/lessons\/([^/]+)$/)[1]!;
-      await lessonsService.cancelLesson(auth, lessonId);
+      await lessonsService.cancelLesson(auth, lessonId, lessonScopeFrom(event));
       return noContent();
     }
 

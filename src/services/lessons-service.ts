@@ -16,6 +16,8 @@ import { conflictError, notFoundError } from '../lib/errors';
 import { repository } from '../data/repository';
 import { studentService } from './student-service';
 
+type LessonUpdateScope = 'single' | 'series';
+
 const sortByStart = (left: Lesson, right: Lesson) =>
   new Date(left.startAt).getTime() - new Date(right.startAt).getTime();
 
@@ -103,6 +105,51 @@ const mergeWarnings = (warnings: LessonWarning[]): LessonWarning[] => {
   ];
 };
 
+const listSeriesLessons = async (auth: AuthContext, lesson: Lesson): Promise<Lesson[]> => {
+  if (!lesson.recurringSeriesId) {
+    return [lesson];
+  }
+
+  const allLessons = await repository.listAllLessons(auth.teacherId);
+
+  return allLessons
+    .map((item) => lessonSchema.parse(item))
+    .filter((candidate) => candidate.recurringSeriesId === lesson.recurringSeriesId)
+    .sort(sortByStart);
+};
+
+const buildSeriesUpdate = (
+  seriesLessons: Lesson[],
+  referenceLesson: Lesson,
+  input: ReturnType<typeof updateLessonInputSchema.parse>,
+  timestamp: string
+): Lesson[] => {
+  const startDelta =
+    input.startAt !== undefined
+      ? new Date(input.startAt).getTime() - new Date(referenceLesson.startAt).getTime()
+      : 0;
+  const endDelta =
+    input.endAt !== undefined
+      ? new Date(input.endAt).getTime() - new Date(referenceLesson.endAt).getTime()
+      : 0;
+
+  return seriesLessons.map((lesson) =>
+    lessonSchema.parse({
+      ...lesson,
+      ...input,
+      startAt:
+        input.startAt !== undefined
+          ? new Date(new Date(lesson.startAt).getTime() + startDelta).toISOString()
+          : lesson.startAt,
+      endAt:
+        input.endAt !== undefined
+          ? new Date(new Date(lesson.endAt).getTime() + endDelta).toISOString()
+          : lesson.endAt,
+      updatedAt: timestamp
+    })
+  );
+};
+
 const ensureStudentsExistAndAreActive = async (auth: AuthContext, studentIds: string[]) => {
   await Promise.all(
     studentIds.map(async (studentId) => {
@@ -155,12 +202,36 @@ export const lessonsService = {
     });
   },
 
-  async updateLesson(auth: AuthContext, lessonId: string, payload: unknown): Promise<LessonOperationResult> {
+  async updateLesson(
+    auth: AuthContext,
+    lessonId: string,
+    payload: unknown,
+    scope: LessonUpdateScope = 'single'
+  ): Promise<LessonOperationResult> {
     const input = updateLessonInputSchema.parse(payload);
     const existing = await this.getLesson(auth, lessonId);
 
     if (input.studentIds) {
       await ensureStudentsExistAndAreActive(auth, input.studentIds);
+    }
+
+    if (scope === 'series' && existing.recurringSeriesId) {
+      const timestamp = nowIso();
+      const seriesLessons = await listSeriesLessons(auth, existing);
+      const updatedSeries = buildSeriesUpdate(seriesLessons, existing, input, timestamp);
+      const updatedIds = new Set(updatedSeries.map((lesson) => lesson.lessonId));
+      const candidates = (await repository.listAllLessons(auth.teacherId))
+        .map((candidate) => lessonSchema.parse(candidate))
+        .filter((candidate) => !updatedIds.has(candidate.lessonId));
+      const warnings = mergeWarnings(updatedSeries.flatMap((lesson) => createWarnings(lesson, candidates)));
+
+      await Promise.all(updatedSeries.map(async (lesson) => repository.putLesson(lesson)));
+
+      return lessonOperationResultSchema.parse({
+        lesson: updatedSeries.find((lesson) => lesson.lessonId === lessonId) ?? updatedSeries[0],
+        affectedLessons: updatedSeries,
+        warnings
+      });
     }
 
     const updated = lessonSchema.parse({
@@ -190,8 +261,27 @@ export const lessonsService = {
     });
   },
 
-  async cancelLesson(auth: AuthContext, lessonId: string): Promise<void> {
+  async cancelLesson(auth: AuthContext, lessonId: string, scope: LessonUpdateScope = 'single'): Promise<void> {
     const existing = await this.getLesson(auth, lessonId);
+
+    if (scope === 'series' && existing.recurringSeriesId) {
+      const timestamp = nowIso();
+      const seriesLessons = await listSeriesLessons(auth, existing);
+
+      await Promise.all(
+        seriesLessons.map(async (lesson) =>
+          repository.putLesson(
+            lessonSchema.parse({
+              ...lesson,
+              status: 'cancelled',
+              updatedAt: timestamp
+            })
+          )
+        )
+      );
+      return;
+    }
+
     const updated = lessonSchema.parse({
       ...existing,
       status: 'cancelled',

@@ -25,6 +25,9 @@ on:
       - 'vitest.config.ts'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -41,14 +44,27 @@ jobs:
           repository: brouklins/class-manager-shared
           path: class-manager-shared
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ vars.NODE_VERSION || '22' }}
+          cache: pnpm
+          cache-dependency-path: |
+            class-manager-api/pnpm-lock.yaml
+            class-manager-shared/pnpm-lock.yaml
 
-      - name: Enable Corepack
-        working-directory: class-manager-api
-        run: corepack enable
+      - name: Install shared dependencies
+        working-directory: class-manager-shared
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared package
+        working-directory: class-manager-shared
+        run: pnpm build
 
       - name: Install dependencies
         working-directory: class-manager-api
@@ -83,14 +99,27 @@ jobs:
           repository: brouklins/class-manager-shared
           path: class-manager-shared
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ vars.NODE_VERSION || '22' }}
+          cache: pnpm
+          cache-dependency-path: |
+            class-manager-api/pnpm-lock.yaml
+            class-manager-shared/pnpm-lock.yaml
 
-      - name: Enable Corepack
-        working-directory: class-manager-api
-        run: corepack enable
+      - name: Install shared dependencies
+        working-directory: class-manager-shared
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared package
+        working-directory: class-manager-shared
+        run: pnpm build
 
       - name: Install dependencies
         working-directory: class-manager-api

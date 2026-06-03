@@ -121,6 +121,12 @@ export const handler = async (
 
     if (isPath(event, 'DELETE', /^\/v1\/lessons\/[^/]+$/)) {
       const lessonId = getMatch(rawPath, /^\/v1\/lessons\/([^/]+)$/)[1]!;
+      await lessonsService.deleteLesson(auth, lessonId, lessonScopeFrom(event));
+      return noContent();
+    }
+
+    if (isPath(event, 'POST', /^\/v1\/lessons\/[^/]+\/deactivate$/)) {
+      const lessonId = getMatch(rawPath, /^\/v1\/lessons\/([^/]+)\/deactivate$/)[1]!;
       await lessonsService.cancelLesson(auth, lessonId, lessonScopeFrom(event));
       return noContent();
     }

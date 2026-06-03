@@ -1,4 +1,5 @@
 import {
+  DeleteCommand,
   GetCommand,
   PutCommand,
   QueryCommand,
@@ -137,6 +138,18 @@ export const repository = {
     );
   },
 
+  async deleteLesson(teacherId: string, lessonId: string): Promise<void> {
+    await dynamo.send(
+      new DeleteCommand({
+        TableName: env.tableName,
+        Key: {
+          PK: teacherPk(teacherId),
+          SK: lessonSk(lessonId)
+        }
+      })
+    );
+  },
+
   async rawUpdate(
     key: { PK: string; SK: string },
     updateExpression: string,
@@ -163,4 +176,3 @@ export const keys = {
   studentSk,
   lessonSk
 };
-

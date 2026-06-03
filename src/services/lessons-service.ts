@@ -291,6 +291,21 @@ export const lessonsService = {
     await repository.putLesson(updated);
   },
 
+  async deleteLesson(auth: AuthContext, lessonId: string, scope: LessonUpdateScope = 'single'): Promise<void> {
+    const existing = await this.getLesson(auth, lessonId);
+
+    if (scope === 'series' && existing.recurringSeriesId) {
+      const seriesLessons = await listSeriesLessons(auth, existing);
+
+      await Promise.all(
+        seriesLessons.map(async (lesson) => repository.deleteLesson(auth.teacherId, lesson.lessonId))
+      );
+      return;
+    }
+
+    await repository.deleteLesson(auth.teacherId, lessonId);
+  },
+
   async addStudent(auth: AuthContext, lessonId: string, studentId: string) {
     const [lesson, student] = await Promise.all([
       this.getLesson(auth, lessonId),
